@@ -69,31 +69,34 @@ object JuliaRDD extends Logging {
   def fromRDD[T](rdd: RDD[T], command: Array[Byte]): JuliaRDD =
     new JuliaRDD(rdd, command)
 
+  def startWorkerProcess(workerType: String): java.lang.Process = {
+    val juliaHome = sys.env.get("JULIA_HOME").getOrElse("")
+    val juliaVersion = sys.env.get("JULIA_VERSION").getOrElse("v0.7")
+    val juliaCommand = Paths.get(juliaHome, "julia").toString()
+    val juliaPkgDir =  sys.env.get("JULIA_PKGDIR") match {
+      case Some(i) => Paths.get(i, juliaVersion, "Spark").toString()
+      case None => Process(juliaCommand +
+        " -e println(dirname(dirname(Base.find_package(\"Spark\"))))").!!.trim
+    }
+
+    val pb = new ProcessBuilder(juliaCommand, Paths.get(juliaPkgDir, "src", "worker_runner.jl").toString())
+
+
+    pb.directory(new File(SparkFiles.getRootDirectory()))
+    // val workerEnv = pb.environment()
+    // workerEnv.putAll(envVars)
+    val worker = pb.start()
+    // Redirect worker stdout and stderr
+    StreamUtils.redirectStreamsToStderr(worker.getInputStream, worker.getErrorStream)
+    worker
+  }
+
   def createWorker(): Socket = {
     var serverSocket: ServerSocket = null
     try {
       serverSocket = new ServerSocket(0, 1, InetAddress.getByAddress(Array(127, 0, 0, 1).map(_.toByte)))
 
-      // Create and start the worker
-      val juliaHome = sys.env.get("JULIA_HOME").getOrElse("")
-      val juliaVersion = sys.env.get("JULIA_VERSION").getOrElse("v0.7")
-      val juliaCommand = Paths.get(juliaHome, "julia").toString()
-      val juliaPkgDir =  sys.env.get("JULIA_PKGDIR") match {
-          case Some(i) => Paths.get(i, juliaVersion, "Spark").toString()
-          case None => Process(juliaCommand +
-            " -e println(dirname(dirname(Base.find_package(\"Spark\"))))").!!.trim
-      }
-
-      val pb = new ProcessBuilder(juliaCommand, Paths.get(juliaPkgDir, "src", "worker_runner.jl").toString())
-
-
-      pb.directory(new File(SparkFiles.getRootDirectory()))
-      // val workerEnv = pb.environment()
-      // workerEnv.putAll(envVars)
-      val worker = pb.start()
-
-      // Redirect worker stdout and stderr
-      StreamUtils.redirectStreamsToStderr(worker.getInputStream, worker.getErrorStream)
+      val worker = startWorkerProcess("rdd")
 
       // Tell the worker our port
       val out = new OutputStreamWriter(worker.getOutputStream)

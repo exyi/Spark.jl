@@ -16,6 +16,7 @@ for filename in readdir()
 end
 
 function main()
+    worker_type = ARGS[1]
     port = parse(Int, readline(stdin))
     sock = connect("127.0.0.1", port)
     try
